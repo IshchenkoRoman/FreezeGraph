@@ -1,0 +1,126 @@
+1. Представление графов
+    Граф можно представить в нескольких форматах:
+        *.meta *.index *.data(-00000-of-000001)
+                *.meta - описывает структуру графа и включает в себя объекты на подобие GraphDef, SaverDef
+                *index - представле в виде немутабельной таблицы, в котором записаны тензоры и их значения
+                *data  - некий объект TensorBundle collection, в котором сохранены все значения всех переменных
+        .pb
+            Это запакованная структура графа (.meta) и данные (.meta)
+
+2. Сохранение графов
+
+    Сохранять графы можно через объекты SavedModelBuilder и Saver
+
+    Первый объект дает больше возможностей для управления и способа сохранения графа. Его описание я упущу по причине не владения опыта работы с ним.
+    Второй объект tf.train.Saver() принимает в себя текущую сессию и название файла. После вызова этого метода будет создано 4 файла- checkpoint, *.meta, *.index, *.data
+    Для упаковки в .pb формат используйте tf.train.write_graph(graph_or_graph_def, logdir, name, as_text=True), который принимает граф, папку по которой стоит записать граф, название модели и тип.
+    as_text=True сохранит в формате .pbtxt, который читаемый для человека, в ином случае будет записан как бинарный(!!!) файл
+    Пример использования:
+
+        init_op = tf.global_variables_initializer()
+        saver = tf.train.Saver()
+
+        with tf.Session() as sess:
+            sess.run(init_op)
+
+            # Make any else calculations/ trainig data
+            for i in range(1100):
+                batch = mnist.train.next_batch(50)
+                res = sess.run(y_CNN, feed_dict={x: batch[0], y_: batch[1], keep_prob: 0.5})
+
+            tf.train.write_graph(tf.Session().graph_def, "./", "model.pb", as_text=False)
+            saver.save(sess=sess, save_path="./CNN")
+
+        sess.close()
+
+3. Заморозка графа
+
+    После сохранения графа в формате .pb граф можно заморозить. Для этого склоньте репозиторий git clone https://github.com/tensorflow/tensorflow
+    и проверьте есть ли скрипт freeze_graph по пути: tensorflow/python/tools/freeze_graph.py
+
+    Далее в папке, где сохранены ваши файлы *.meta, *.index, *.data выполните команду в командной строке (запустите этот скрипт)
+
+    Пример использования:
+
+        python -m tensorflow.python.tools.freeze_graph \
+            --input_graph model.pb \
+            --input_checkpoint ./CNN \
+            --input_binary=true \
+            --output_graph frozen_graph.pb\
+            --output_node_names=y_CNN
+
+    Параметры:
+        --input_graph -  имя .pb графа
+        --input_checkpoint - возможно файлы типа *.meta, *.index, *.data
+        --input_binary - так, как мы сохранили в формат .pb - он считается бинарным, соответственно флаг нужно поставить True
+        --output_graph - имя выходящего графа
+        --output_node_names - имя выходящего Тензора/ Опреации!
+
+        проверить имя всех тензоров и операций можно так: print([tensor.name for tensor in tf.get_default_graph().as_graph_def().node])
+
+
+
+4. Загрузка графов
+
+    А) Загрузка .meta
+
+        для этого нам нужно два метода- tf.train.import_meta_graph() и Saver.restore()
+
+        Первый- импортирует наш граф, а второй восстанавливает всю информацию о графе- веса, операции и т.д.
+
+        Пример использования:
+            new_saver = tf.train.import_meta_graph("./CNN.meta")
+            new_saver.restore(sess, "./CNN")
+
+    Б) Загрузка замороженного графа .pb
+
+        Тут я просто пример дам с небольшими коментариями
+
+
+        # Load freeze graph
+        with tf.gfile.GFile("model.pb", "rb") as f:
+            graph_def = tf.GraphDef()
+            graph_def.ParseFromString(f.read())
+
+        # Import data to new graph
+        with tf.Graph().as_default() as graph:
+            tf.import_graph_def(
+                graph_def,
+                name="prefix"
+            )
+
+5. Оптимизация замороженного графа
+
+    Если вы не клонили репозиторий tensorflow, то сделайте это: git clone https://github.com/tensorflow/tensorflow
+    и проверьте есть ли скрипт freeze_graph по пути: tensorflow/python/tools/optimize_for_inference.py
+
+    Далее в папке где находится замороженный граф выполните команду в командной строке.
+
+    Пример использования:
+
+        python -m tensorflow.python.tools.optimize_for_inference \
+             --input=frozen_graph.pb \
+              --input_binary=True \
+              --frozen_graph=True \
+              --output=Optimize_graph.pb\
+              --output_names=y_CNN \
+              --input_names=x keep_prob
+
+    Параметры:
+
+     --input Название замороженного графа
+     --input_binary В бинарном ли он виде
+     --frozen_graph Заморожен ли граф
+     --output Имя выходящего графа
+     --output_names Имя выходящего Тензора/ Опреации
+     --input_names Имя входящий параметров
+
+P.S.
+Useful links
+https://gist.github.com/tokestermw/795cc1fd6d0c9069b20204cbd133e36b
+https://stackoverflow.com/questions/45191525/import-a-simple-tensorflow-frozen-model-pb-file-and-make-prediction-in-c
+http://wossoneri.github.io/2017/12/12/[Tensorflow]Train-model-with-SSD-MobileNet/
+https://stackoverflow.com/questions/45779268/saving-tf-trainable-variables-using-convert-variables-to-constants
+FOR KERAS: https://github.com/GoogleCloudPlatform/cloudml-samples/blob/master/census/keras/trainer/model.py#L85
+https://github.com/tensorflow/rust/blob/92d60f9ac7e90687635c7c07e01dea16495b8492/examples/regression_savedmodel.py
+https://stackoverflow.com/questions/45382917/how-to-optimize-for-inference-a-simple-saved-tensorflow-1-0-1-graph/45493657
